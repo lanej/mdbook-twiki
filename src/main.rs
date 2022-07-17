@@ -2,9 +2,9 @@ mod twiki;
 
 extern crate mdbook;
 
+use std::fs::{self, File};
 use std::io;
 use twiki::to_twiki;
-use std::fs::{self, File};
 
 use mdbook::{renderer::RenderContext, BookItem};
 extern crate serde;
@@ -26,11 +26,11 @@ fn main() {
     let _ = fs::create_dir_all(&ctx.destination);
     let mut f = File::create(ctx.destination.join("index.twiki")).unwrap();
 
-    let cfg: WordcountConfig = ctx.config
+    let cfg: WordcountConfig = ctx
+        .config
         .get_deserialized_opt("output.wordcount")
         .unwrap_or_default()
         .unwrap_or_default();
-
 
     // TODO: generate the TOC first
     // TODO: are chapters iterated in order for the SUMMARY.md
@@ -40,7 +40,7 @@ fn main() {
                 continue;
             }
 
-            to_twiki(&ch.content, &mut f)
+            to_twiki(&ch.content, &mut f).unwrap();
         }
     }
 }
