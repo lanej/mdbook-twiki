@@ -1,9 +1,12 @@
 use pulldown_cmark::{Event, Options, Parser, Tag};
 
-// https://twiki.org/cgi-bin/view/TWiki05x01/TextFormattingRules
+// https://twiki.org/cgi-bin/view/TWiki05x01/TextF&ormattingRules
+// TODO: separate markdown parsing and twiki formation
 pub fn to_twiki(content: &str, output: &mut dyn std::io::Write) {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_STRIKETHROUGH);
+
+    let mut code_block = false;
     Parser::new_ext(&content, options).for_each(|e| match e {
         Event::Start(s) => match s {
             Tag::Paragraph => {}
@@ -15,10 +18,9 @@ pub fn to_twiki(content: &str, output: &mut dyn std::io::Write) {
                 write!(output, "---{} {}", twiki_level, id.unwrap_or_default()).unwrap()
             }
             Tag::BlockQuote => todo!(),
-            Tag::CodeBlock(c) => {
-                if let pulldown_cmark::CodeBlockKind::Fenced(fc) = c {
-                    writeln!(output, "<code>{}</code>", fc).unwrap()
-                }
+            Tag::CodeBlock(_) => {
+                code_block = true;
+                writeln!(output, "<verbatim>").unwrap()
             }
             Tag::List(_) => todo!(),
             Tag::Item => todo!(),
@@ -35,9 +37,12 @@ pub fn to_twiki(content: &str, output: &mut dyn std::io::Write) {
         },
         Event::End(ee) => match ee {
             Tag::Paragraph => write!(output, "\n").unwrap(),
-            Tag::Heading(_, _, _) => {}
+            Tag::Heading(_, _, _) => write!(output, "\n").unwrap(),
             Tag::BlockQuote => todo!(),
-            Tag::CodeBlock(_) => write!(output, "\n").unwrap(),
+            Tag::CodeBlock(_) => {
+                code_block = false;
+                write!(output, "</verbatim>\n").unwrap()
+            }
             Tag::List(_) => todo!(),
             Tag::Item => todo!(),
             Tag::FootnoteDefinition(_) => todo!(),
@@ -54,7 +59,11 @@ pub fn to_twiki(content: &str, output: &mut dyn std::io::Write) {
             Tag::Image(_, _, _) => todo!(),
         },
         Event::Text(s) => {
-            write!(output, "{}", s).unwrap();
+            if code_block && s.trim_start().starts_with("```") {
+                // pass
+            } else {
+                write!(output, "{}", s.trim_end().strip_suffix("```").unwrap_or(&s)).unwrap();
+            }
         }
         Event::Code(c) => match c {
             pulldown_cmark::CowStr::Boxed(_) => todo!(),
@@ -77,7 +86,15 @@ struct StringIO {
 
 impl StringIO {
     fn new() -> Self {
-        Self { buffer: String::new() }
+        Self {
+            buffer: String::new(),
+        }
+    }
+}
+
+impl Default for StringIO {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -89,19 +106,48 @@ impl ToString for StringIO {
 
 impl std::io::Write for StringIO {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.buffer.push_str(&String::from_utf8(buf.to_vec()).unwrap());
+        self.buffer
+            .push_str(&String::from_utf8(buf.to_vec()).unwrap());
         Ok(buf.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        todo!()
+        Ok(())
     }
 }
 
-#[test]
-fn test_inline_code() {
+#[allow(dead_code)]
+fn markdown_to_twiki_string(markdown: String) -> String {
     let mut output = StringIO::new();
-    let expected = "=code=\n";
-    to_twiki("`code`", &mut output);
-    assert!(output.to_string() == expected, "expected = {:?}, actual = {:?}", expected, output.to_string());
+    to_twiki(&markdown, &mut output);
+    return output.to_string();
+}
+
+#[test]
+fn test_conversion() {
+    let matrix = [
+        ["`inline_code`", "=inline_code=\n"],
+        [
+            r#"```ruby
+        def fn(i); o; end
+        ```"#,
+            r#"<verbatim>
+        def fn(i); o; end
+        </verbatim>
+"#,
+        ],
+        ["# heading 1", "---+ heading 1\n"],
+        ["## heading 2", "---++ heading 2\n"],
+        ["### heading 3", "---+++ heading 3\n"],
+        ["#### heading 4", "---++++ heading 4\n"],
+    ];
+    matrix.iter().for_each(|[input, expected]: &[&str; 2]| {
+        let actual = markdown_to_twiki_string(input.to_string());
+        assert!(
+            &actual == expected,
+            "expected = {:?}, actual = {:?}",
+            expected,
+            actual
+        );
+    });
 }
