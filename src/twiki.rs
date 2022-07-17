@@ -1,12 +1,19 @@
-use pulldown_cmark::{Event, Options, Parser, Tag};
+use pulldown_cmark::{CowStr, Event, Options, Parser, Tag};
 
 // https://twiki.org/cgi-bin/view/TWiki05x01/TextF&ormattingRules
 // TODO: separate markdown parsing and twiki formation
 pub fn to_twiki(content: &str, output: &mut dyn std::io::Write) -> std::io::Result<()> {
     let mut options = Options::empty();
-    options.insert(Options::ENABLE_STRIKETHROUGH);
-
     let mut code_block = false;
+    let mut in_list = false;
+    options.insert(Options::ENABLE_STRIKETHROUGH);
+    options.insert(Options::ENABLE_TABLES);
+    options.insert(Options::ENABLE_FOOTNOTES);
+    options.insert(Options::ENABLE_STRIKETHROUGH);
+    options.insert(Options::ENABLE_TASKLISTS);
+    // options.insert(Options::ENABLE_SMART_PUNCTUATION);
+    // options.insert(Options::ENABLE_HEADING_ATTRIBUTES);
+
     for e in Parser::new_ext(&content, options) {
         match e {
             Event::Start(s) => match s {
@@ -18,13 +25,15 @@ pub fn to_twiki(content: &str, output: &mut dyn std::io::Write) -> std::io::Resu
                     }
                     write!(output, "---{} {}", twiki_level, id.unwrap_or_default())?
                 }
-                Tag::BlockQuote => todo!(),
+                Tag::BlockQuote => writeln!(output, "<verbatim>")?,
                 Tag::CodeBlock(_) => {
                     code_block = true;
                     writeln!(output, "<verbatim>")?
                 }
-                Tag::List(_) => todo!(),
-                Tag::Item => todo!(),
+                Tag::List(_) => {
+                    in_list = true;
+                }
+                Tag::Item => {}
                 Tag::FootnoteDefinition(_) => todo!(),
                 Tag::Table(_) => todo!(),
                 Tag::TableHead => todo!(),
@@ -32,20 +41,22 @@ pub fn to_twiki(content: &str, output: &mut dyn std::io::Write) -> std::io::Resu
                 Tag::TableCell => todo!(),
                 Tag::Emphasis => write!(output, "*")?,
                 Tag::Strong => {}
-                Tag::Strikethrough => todo!(),
+                Tag::Strikethrough => write!(output, "<strike>")?,
                 Tag::Link(_, _, _) => todo!(),
                 Tag::Image(_, _, _) => todo!(),
             },
             Event::End(ee) => match ee {
                 Tag::Paragraph => write!(output, "\n")?,
                 Tag::Heading(_, _, _) => write!(output, "\n")?,
-                Tag::BlockQuote => todo!(),
+                Tag::BlockQuote => write!(output, "</verbatim>\n")?,
                 Tag::CodeBlock(_) => {
                     code_block = false;
                     write!(output, "</verbatim>\n")?
                 }
-                Tag::List(_) => todo!(),
-                Tag::Item => todo!(),
+                Tag::List(_) => {
+                    in_list = false;
+                }
+                Tag::Item => write!(output, "\n")?,
                 Tag::FootnoteDefinition(_) => todo!(),
                 Tag::Table(_) => todo!(),
                 Tag::TableHead => todo!(),
@@ -55,7 +66,7 @@ pub fn to_twiki(content: &str, output: &mut dyn std::io::Write) -> std::io::Resu
                 Tag::Strong => {
                     write!(output, "*").unwrap();
                 }
-                Tag::Strikethrough => todo!(),
+                Tag::Strikethrough => write!(output, "</strike>")?,
                 Tag::Link(_, _, _) => todo!(),
                 Tag::Image(_, _, _) => todo!(),
             },
@@ -64,20 +75,33 @@ pub fn to_twiki(content: &str, output: &mut dyn std::io::Write) -> std::io::Resu
                     // pass
                 } else if code_block {
                     write!(output, "{}", s.trim_end().strip_suffix("```").unwrap_or(&s)).unwrap();
+                } else if in_list {
+                    let item = s.to_string();
+                    let mut prefix = String::new();
+                    item.chars()
+                        .take_while(|c| '*' == *c)
+                        .skip(1)
+                        .for_each(|_| prefix.push_str("\t"));
+                    write!(
+                        output,
+                        "{}* {}",
+                        prefix,
+                        item.trim_start_matches("*").trim_start()
+                    )?;
                 } else {
-                    write!(output, "{}", s).unwrap();
+                    write!(output, "{}", s)?;
                 }
             }
             Event::Code(c) => match c {
-                pulldown_cmark::CowStr::Boxed(_) => todo!(),
-                pulldown_cmark::CowStr::Inlined(s) => write!(output, "={}=", s)?,
-                pulldown_cmark::CowStr::Borrowed(s) => write!(output, "={}=", s)?,
+                CowStr::Boxed(s) => write!(output, "={}=", s)?,
+                CowStr::Inlined(s) => write!(output, "={}=", s)?,
+                CowStr::Borrowed(s) => write!(output, "={}=", s)?,
             },
-            Event::Html(_) => todo!(),
+            Event::Html(tag) => write!(output, "{}", tag)?,
             Event::FootnoteReference(_) => todo!(),
             Event::SoftBreak => write!(output, "\n")?,
-            Event::HardBreak => todo!(),
-            Event::Rule => todo!(),
+            Event::HardBreak => write!(output, "\n")?,
+            Event::Rule => write!(output, "\n---\n")?,
             Event::TaskListMarker(_) => todo!(),
         }
     }
@@ -153,6 +177,10 @@ fn test_conversion() {
             "paragraph 1\nparagraph 2\n",
         ],
         ["*bold*", "*bold*\n"],
+        [
+            "* item 1\n** item 2\n*** item 3\n",
+            "* item 1\n\t* item 2\n\t\t* item 3\n",
+        ],
     ];
     matrix.iter().for_each(|[input, expected]: &[&str; 2]| {
         let actual = markdown_to_twiki_string(input.to_string());
